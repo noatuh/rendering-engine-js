@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Rendering Engine: Cube & Tesseract</title>
+    <style>
+        body { background: #000; margin: 0; overflow: hidden; }
+        #controls { position: absolute; top: 10px; left: 10px; z-index: 10; }
+        #controls label { color: #fff; font-family: sans-serif; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <label>Shape:
+            <select id="shapeSelect">
+                <option value="point">Point (0D)</option>
+                <option value="line">Line (1D)</option>
+                <option value="square">Square (2D)</option>
+                <option value="cube" selected>Cube (3D)</option>
+                <option value="tesseract">Tesseract (4D)</option>
+            </select>
+        </label><br>
+        <label for="scaleRange">Size:</label>
+        <input type="range" id="scaleRange" min="50" max="600" value="240" style="vertical-align:middle;">
+        <button id="growBtn">Grow</button>
+        <button id="shrinkBtn">Shrink</button>
+        <button id="playPauseBtn">Pause Rotation</button>
+    </div>
+    <canvas id="canvas"></canvas>
+    <script>
+    // Play/pause rotation
+    let playing = true;
+    const playPauseBtn = document.getElementById('playPauseBtn');
+    playPauseBtn.onclick = () => {
+        playing = !playing;
+        playPauseBtn.textContent = playing ? 'Pause Rotation' : 'Play Rotation';
+    };
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Cube/tesseract scale
+    let scale = 240;
+    const scaleRange = document.getElementById('scaleRange');
+    scaleRange.addEventListener('input', e => {
+        scale = parseInt(e.target.value);
+    });
+    document.getElementById('growBtn').onclick = () => {
+        scale = Math.min(scale + 25, 600);
+        scaleRange.value = scale;
+    };
+    document.getElementById('shrinkBtn').onclick = () => {
+        scale = Math.max(scale - 25, 50);
+        scaleRange.value = scale;
+    };
+
+    // Mouse drag rotation controls
+    let drag = false;
+    let lastX = 0, lastY = 0;
+    let rotX = 0, rotY = 0; // Rotation angles in radians
+    canvas.addEventListener('mousedown', e => {
+        drag = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+    });
+    window.addEventListener('mouseup', () => { drag = false; });
+    window.addEventListener('mousemove', e => {
+        if (drag) {
+            rotY += (e.clientX - lastX) * 0.01;
+            rotX += (e.clientY - lastY) * 0.01;
+            lastX = e.clientX;
+            lastY = e.clientY;
+        }
+    });
+
+    // 3D Cube vertices and edges
+    const cubeVertices = [
+        [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+        [-1, -1, 1],  [1, -1, 1],  [1, 1, 1],  [-1, 1, 1]
+    ];
+    const cubeEdges = [
+        [0,1],[1,2],[2,3],[3,0], // bottom
+        [4,5],[5,6],[6,7],[7,4], // top
+        [0,4],[1,5],[2,6],[3,7]  // sides
+    ];
+
+    // Tesseract (4D hypercube) vertices and edges
+    function tesseractVertices() {
+        const v = [];
+        for (let i=0; i<16; ++i) {
+            v.push([
+                (i&1)?1:-1,
+                (i&2)?1:-1,
+                (i&4)?1:-1,
+                (i&8)?1:-1
+            ]);
+        }
+        return v;
+    }
+    function tesseractEdges() {
+        const e = [];
+        for (let i=0; i<16; ++i) {
+            for (let j=0; j<4; ++j) {
+                let k = i ^ (1<<j);
+                if (i < k) e.push([i, k]);
+            }
+        }
+        return e;
+    }
+
+    // Project 3D point to 2D
+    function project([x, y, z]) {
+        const viewerDist = 3;
+        const px = canvas.width/2 + x * scale / (z + viewerDist);
+        const py = canvas.height/2 + y * scale / (z + viewerDist);
+        return [px, py];
+    }
+
+    // Project 4D point to 3D, then to 2D
+    function project4D([x, y, z, w], angle4D) {
+        // 4D rotation (w-z plane)
+        let zw = z * Math.cos(angle4D) - w * Math.sin(angle4D);
+        let ww = z * Math.sin(angle4D) + w * Math.cos(angle4D);
+        // Project to 3D
+        const viewerDist4D = 3;
+        let x3 = x / (ww + viewerDist4D);
+        let y3 = y / (ww + viewerDist4D);
+        let z3 = zw / (ww + viewerDist4D);
+        // 3D rotation (y-z plane)
+        let angle3D = Date.now()/1000;
+        let yz = y3 * Math.cos(angle3D) - z3 * Math.sin(angle3D);
+        let zz = y3 * Math.sin(angle3D) + z3 * Math.cos(angle3D);
+        return project([x3, yz, zz]);
+    }
+
+    function drawWireframe(vertices, edges, projectFunc) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#0f0';
+        ctx.lineWidth = 2;
+        for (const [a, b] of edges) {
+            const [x1, y1] = projectFunc(vertices[a]);
+            const [x2, y2] = projectFunc(vertices[b]);
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.stroke();
+        }
+    }
+
+    let shapeType = 'cube';
+    const shapeSelect = document.getElementById('shapeSelect');
+    shapeSelect.addEventListener('change', e => {
+        shapeType = e.target.value;
+    });
+
+    function rotate3D([x, y, z], ax, ay) {
+        // Rotate around Y axis
+        let xx = x * Math.cos(ay) - z * Math.sin(ay);
+        let zz = x * Math.sin(ay) + z * Math.cos(ay);
+        // Rotate around X axis
+        let yy = y * Math.cos(ax) - zz * Math.sin(ax);
+        let zz2 = y * Math.sin(ax) + zz * Math.cos(ax);
+        return [xx, yy, zz2];
+    }
+
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (shapeType === 'point') {
+            // 0D: Point
+            ctx.fillStyle = '#0f0';
+            ctx.beginPath();
+            ctx.arc(canvas.width/2, canvas.height/2, 6, 0, 2*Math.PI);
+            ctx.fill();
+        } else if (shapeType === 'line') {
+            // 1D: Line
+            let p1 = project(rotate3D([-1, 0, 0], rotX, rotY));
+            let p2 = project(rotate3D([1, 0, 0], rotX, rotY));
+            ctx.strokeStyle = '#0f0';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(...p1);
+            ctx.lineTo(...p2);
+            ctx.stroke();
+        } else if (shapeType === 'square') {
+            // 2D: Square
+            let verts = [
+                [-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]
+            ].map(v => project(rotate3D(v, rotX, rotY)));
+            ctx.strokeStyle = '#0f0';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = 0; i < 4; ++i) {
+                let [x, y] = verts[i];
+                if (i === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.stroke();
+        } else if (shapeType === 'cube') {
+            // 3D: Cube
+            const angle = playing ? Date.now()/1000 : 0;
+            const rotVerts = cubeVertices.map(([x, y, z]) => {
+                let ca = Math.cos(angle), sa = Math.sin(angle);
+                let xz = x * ca - y * sa;
+                let yz = x * sa + y * ca;
+                return rotate3D([xz, yz, z], rotX, rotY);
+            });
+            drawWireframe(rotVerts, cubeEdges, project);
+        } else if (shapeType === 'tesseract') {
+            // 4D: Tesseract
+            const verts = tesseractVertices();
+            const edges = tesseractEdges();
+            const angle4D = playing ? Date.now()/1500 : 0;
+            drawWireframe(
+                verts.map(v => {
+                    let [x, y, z, w] = v;
+                    let zw = z * Math.cos(angle4D) - w * Math.sin(angle4D);
+                    let ww = z * Math.sin(angle4D) + w * Math.cos(angle4D);
+                    const viewerDist4D = 2.5;
+                    let x3 = x / (ww + viewerDist4D);
+                    let y3 = y / (ww + viewerDist4D);
+                    let z3 = zw / (ww + viewerDist4D);
+                    let [xr, yr, zr] = rotate3D([x3, y3, z3], rotX, rotY);
+                    return [xr, yr, zr];
+                }),
+                edges,
+                project
+            );
+        }
+        requestAnimationFrame(animate);
+    }
+    animate();
+    </script>
+</body>
+</html>
